@@ -134,12 +134,15 @@ def _drawtext(text: str, start: float, end: float,
               fontcolor: str = SUB_COLOR,
               box_color: str = SUB_BOX_COLOR,
               box_pad: int = SUB_BOX_PAD,
+              border_width: int = 0,
+              border_color: str = "black",
               fade: bool = True) -> str:
     """
     単一セグメントの drawtext フィルタ式を生成
     - フェードイン/アウト（alpha 式）
     - 背景ボックス（box_color="" で無効化）
     - box_pad: 背景の余白 px
+    - border_width/border_color: テキストアウトライン
     """
     safe = _esc(text)
     fa   = _font_arg()
@@ -160,13 +163,24 @@ def _drawtext(text: str, start: float, end: float,
     else:
         box_str = ":box=0"
 
+    # テキストアウトライン（border_width > 0 のとき）
+    if border_width > 0:
+        # hex (#000000) → FFmpeg形式 (0x000000)
+        bc = border_color.replace("#", "0x") if border_color.startswith("#") else border_color
+        border_str = f":borderw={border_width}:bordercolor={bc}"
+        shadow_str = ""  # アウトラインがあれば影は不要
+    else:
+        border_str = ""
+        shadow_str = f":shadowcolor=black:shadowx={SUB_SHADOW}:shadowy={SUB_SHADOW}"
+
     return (
         f"drawtext=text='{safe}'"
         f"{fa}"
         f":fontsize={fontsize}:fontcolor={fontcolor}"
         f":x=(w-text_w)/2:y=h-th-{SUB_Y_MARGIN}"
         f"{box_str}"
-        f":shadowcolor=black:shadowx={SUB_SHADOW}:shadowy={SUB_SHADOW}"
+        f"{border_str}"
+        f"{shadow_str}"
         f":enable='between(t,{start:.3f},{end:.3f})'"
         f"{alpha_arg}"
     )

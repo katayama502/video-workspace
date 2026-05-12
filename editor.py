@@ -107,6 +107,21 @@ DEFAULT_STATE = {
         "title":     "",
         "seek_time": 30.0,
     },
+    "style_template": {
+        "preset":         "default",
+        "font_family":    "gothic_black",
+        "font_size":      52,
+        "color":          "#ffffff",
+        "outline_color":  "#000000",
+        "outline_width":  0,
+        "bg_enabled":     True,
+        "bg_color":       "black",
+        "bg_opacity":     0.65,
+        "bg_padding":     10,
+        "animation":      "fade",
+        "pos_y":          85,
+        "emphasis_color": "#f5c518",
+    },
 }
 
 
@@ -306,13 +321,14 @@ def _run_export(state: dict):
         _log("🚀 エクスポート開始...")
 
         # ── 字幕焼き込み ──────────────────────────
-        subs = state.get("subtitles", [])
+        subs  = state.get("subtitles", [])
+        style = state.get("style_template", {})
         if subs:
             _log("📝 字幕を焼き込み中...")
             srt_out = str(WORKSPACE / "output" / "editor_subtitles.srt")
             _write_srt(subs, srt_out)
             step = str(WORKSPACE / "output" / "e01_subtitled.mp4")
-            _burn_subs(current, step, subs)
+            _burn_subs(current, step, subs, style=style)
             current = step
             _log("   ✅ 字幕完了")
 
@@ -414,13 +430,27 @@ def _write_srt(subs: list, path: str) -> None:
             f.write(f"{i}\n{fmt(seg['start'])} --> {fmt(seg['end'])}\n{seg['text']}\n\n")
 
 
-def _burn_subs(input_path: str, output_path: str, subs: list) -> None:
+def _burn_subs(input_path: str, output_path: str, subs: list, style: dict = None) -> None:
     import sys
     sys.path.insert(0, str(WORKSPACE))
     from edit_pipeline import (
         _drawtext, _apply_vf,
         SUB_FONTSIZE, EMP_COLOR, SUB_COLOR, SUB_BOX_COLOR, SUB_BOX_PAD,
     )
+
+    style = style or {}
+
+    # スタイルテンプレートから共通設定を取得
+    tmpl_outline_w = int(style.get("outline_width", 0))
+    tmpl_outline_c = style.get("outline_color", "#000000")
+    tmpl_color     = style.get("color", "#ffffff")
+    tmpl_emph_c    = style.get("emphasis_color", "yellow")
+
+    # hex → ffmpeg カラー形式
+    def to_ffcolor(c: str) -> str:
+        if c.startswith("#"):
+            return "0x" + c[1:]
+        return c
 
     # 背景色名 → ffmpeg カラー文字列
     BG_COLOR_MAP = {
@@ -432,27 +462,36 @@ def _burn_subs(input_path: str, output_path: str, subs: list) -> None:
 
     vf = []
     for seg in subs:
-        text  = seg.get("text", "").strip()
+        # ==mark== 記法をストリップしてプレーンテキストにする
+        import re as _re
+        text = _re.sub(r"==(.+?)==", r"\1", seg.get("text", "")).strip()
         start = seg["start"]
         end   = max(seg["end"], start + 0.3)
         lines = textwrap.wrap(text, width=28, break_long_words=True)
         disp  = "\\n".join(lines)
 
-        # フォントサイズ・文字色
-        size      = int(seg.get("fontsize", SUB_FONTSIZE))
-        fontcolor = EMP_COLOR if seg.get("emphasis") else (seg.get("fontcolor") or SUB_COLOR)
+        # フォントサイズ・文字色（per-clip 優先 → テンプレート → デフォルト）
+        size = int(seg.get("fontsize", style.get("font_size", SUB_FONTSIZE)))
+        if seg.get("emphasis"):
+            fontcolor = to_ffcolor(tmpl_emph_c)
+        elif seg.get("fontcolor") == "red":
+            fontcolor = "0xff5c5c"
+        elif seg.get("fontcolor") == "cyan":
+            fontcolor = "0x5ce0f5"
+        else:
+            fontcolor = to_ffcolor(tmpl_color)
 
-        # テキスト背景
-        bg_enabled = seg.get("bg_enabled", True)
-        bg_name    = seg.get("bg_color", "black")
-        bg_opacity = float(seg.get("bg_opacity", 0.65))
-        bg_pad     = int(seg.get("bg_padding", SUB_BOX_PAD))
+        # テキスト背景（per-clip 優先 → テンプレート）
+        bg_enabled = seg.get("bg_enabled", style.get("bg_enabled", True))
+        bg_name    = seg.get("bg_color",   style.get("bg_color",   "black"))
+        bg_opacity = float(seg.get("bg_opacity", style.get("bg_opacity", 0.65)))
+        bg_pad     = int(seg.get("bg_padding",   style.get("bg_padding",  SUB_BOX_PAD)))
 
         if bg_enabled and bg_name and bg_name != "none":
             ffmpeg_color = BG_COLOR_MAP.get(bg_name, "black")
             box_color = f"{ffmpeg_color}@{bg_opacity:.2f}"
         else:
-            box_color = ""   # 背景なし
+            box_color = ""
 
         vf.append(_drawtext(
             disp, start, end,
@@ -460,6 +499,8 @@ def _burn_subs(input_path: str, output_path: str, subs: list) -> None:
             fontcolor=fontcolor,
             box_color=box_color,
             box_pad=bg_pad,
+            border_width=tmpl_outline_w,
+            border_color=tmpl_outline_c,
         ))
     _apply_vf(input_path, output_path, vf)
 

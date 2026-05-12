@@ -15,6 +15,7 @@ let exportPoll   = null;
 let dragging     = null;
 let seekDragging = false;
 let rafId        = null;
+let _lastSegId   = null;   // アニメーション管理: 現在表示中のセグメントID
 
 // トラックミュート状態（clientサイド管理）
 const trackMuted = { video: false, subs: false, bgm: false };
@@ -32,6 +33,54 @@ const CLIP_COLORS = [
 
 // ─── スナップ ──────────────────────────────────────────────
 const SNAP_PX = 8;   // snap threshold in screen pixels
+
+// ─── フォントマップ ────────────────────────────────────────
+const FONT_FAMILIES = {
+  gothic_black: "'Hiragino Sans', 'Noto Sans JP', 'BIZ UDGothic', sans-serif",
+  impact:       "Impact, 'Arial Black', 'Franklin Gothic Medium', sans-serif",
+  serif:        "'Noto Serif JP', 'Hiragino Mincho ProN', 'Times New Roman', serif",
+  rounded:      "'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', sans-serif",
+  system:       "-apple-system, 'Helvetica Neue', sans-serif",
+};
+
+// ─── スタイルプリセット ────────────────────────────────────
+const STYLE_PRESETS = [
+  { id:"default",  name:"デフォルト",   emoji:"⬜", desc:"シンプルな黒背景テロップ",
+    style:{ font_family:"gothic_black", font_size:52,  color:"#ffffff",
+            outline_color:"#000000", outline_width:0,
+            bg_enabled:true,  bg_color:"black", bg_opacity:0.65, bg_padding:10,
+            animation:"fade",        pos_y:85, emphasis_color:"#f5c518" } },
+  { id:"hikakin",  name:"ヒカキン風",   emoji:"⭐", desc:"黄色 + 太黒アウトライン + ポップ",
+    style:{ font_family:"gothic_black", font_size:64,  color:"#FFE000",
+            outline_color:"#000000", outline_width:6,
+            bg_enabled:false, bg_color:"black", bg_opacity:0,    bg_padding:0,
+            animation:"pop",         pos_y:83, emphasis_color:"#FF4444" } },
+  { id:"tokai",    name:"東海OA風",     emoji:"🎮", desc:"白太字 + 黒アウトライン + スライド",
+    style:{ font_family:"gothic_black", font_size:54,  color:"#FFFFFF",
+            outline_color:"#000000", outline_width:4,
+            bg_enabled:false, bg_color:"black", bg_opacity:0,    bg_padding:0,
+            animation:"slide-up",    pos_y:85, emphasis_color:"#44AAFF" } },
+  { id:"variety",  name:"バラエティTV", emoji:"🎭", desc:"白 + バウンス + 薄背景",
+    style:{ font_family:"gothic_black", font_size:58,  color:"#FFFFFF",
+            outline_color:"#1a1a1a", outline_width:4,
+            bg_enabled:true,  bg_color:"black", bg_opacity:0.25, bg_padding:8,
+            animation:"bounce",      pos_y:80, emphasis_color:"#FFD700" } },
+  { id:"fischers", name:"Fischer's風", emoji:"🌟", desc:"白 + オレンジ強調 + 太アウトライン",
+    style:{ font_family:"gothic_black", font_size:60,  color:"#FFFFFF",
+            outline_color:"#000000", outline_width:5,
+            bg_enabled:false, bg_color:"black", bg_opacity:0,    bg_padding:0,
+            animation:"pop",         pos_y:82, emphasis_color:"#FF6B00" } },
+  { id:"cinema",   name:"シネマ風",     emoji:"🎬", desc:"明朝体 + 半透明背景 + フェード",
+    style:{ font_family:"serif",        font_size:36,  color:"#FFFFFF",
+            outline_color:"#000000", outline_width:1,
+            bg_enabled:true,  bg_color:"black", bg_opacity:0.7,  bg_padding:14,
+            animation:"fade",        pos_y:90, emphasis_color:"#FFD700" } },
+  { id:"gaming",   name:"ゲーム実況",   emoji:"🕹", desc:"グリーン + タイプライター + 黒BG",
+    style:{ font_family:"gothic_black", font_size:48,  color:"#00FF88",
+            outline_color:"#003300", outline_width:3,
+            bg_enabled:true,  bg_color:"black", bg_opacity:0.85, bg_padding:12,
+            animation:"typewriter",  pos_y:85, emphasis_color:"#FFFF00" } },
+];
 
 const video = () => document.getElementById("video-el");
 
@@ -90,14 +139,14 @@ function undo() {
   if (histIdx <= 0) return;
   histIdx--;
   state.subtitles = JSON.parse(JSON.stringify(history[histIdx]));
-  selectedId = null; mark(); renderAll(); updateUndoBtn();
+  selectedId = null; _lastSegId = null; mark(); renderAll(); updateUndoBtn();
 }
 
 function redo() {
   if (histIdx >= history.length - 1) return;
   histIdx++;
   state.subtitles = JSON.parse(JSON.stringify(history[histIdx]));
-  selectedId = null; mark(); renderAll(); updateUndoBtn();
+  selectedId = null; _lastSegId = null; mark(); renderAll(); updateUndoBtn();
 }
 
 function updateUndoBtn() {
@@ -185,62 +234,131 @@ function updateTimeDisp() {
   document.getElementById("time-cur").textContent = fmtTC(video().currentTime);
 }
 
+// ═══ 字幕スタイルシステム ══════════════════════════════════
+
+/** セグメント + テンプレートをマージして最終スタイルを返す */
+function getEffectiveStyle(seg) {
+  const tmpl = state.style_template || {};
+
+  // 文字色優先順位: emphasis → fontcolor → color_override → template
+  let color = tmpl.color ?? "#ffffff";
+  if      (seg.emphasis)                  color = tmpl.emphasis_color ?? "#f5c518";
+  else if (seg.fontcolor === "red")       color = "#ff5c5c";
+  else if (seg.fontcolor === "cyan")      color = "#5ce0f5";
+  else if (seg.color_override)            color = seg.color_override;
+
+  return {
+    font_family:    tmpl.font_family    ?? "gothic_black",
+    font_size:      seg.fontsize         ?? tmpl.font_size    ?? 52,
+    color,
+    outline_color:  tmpl.outline_color   ?? "#000000",
+    outline_width:  tmpl.outline_width   ?? 0,
+    bg_enabled:     seg.bg_enabled       ?? (tmpl.bg_enabled  ?? true),
+    bg_color:       seg.bg_color         ?? (tmpl.bg_color    ?? "black"),
+    bg_opacity:     seg.bg_opacity       ?? (tmpl.bg_opacity  ?? 0.65),
+    bg_padding:     seg.bg_padding       ?? (tmpl.bg_padding  ?? 10),
+    animation:      seg.animation        ?? (tmpl.animation   ?? "fade"),
+    pos_y:          seg.pos_y            ?? (tmpl.pos_y       ?? 85),
+    opacity:        seg.opacity          ?? 1.0,
+    emphasis_color: tmpl.emphasis_color  ?? "#f5c518",
+  };
+}
+
+/** ==text== 記法をカラー span に変換（XSS安全） */
+function parseInlineMarkup(text, emphColor) {
+  if (!text) return "";
+  return text.split(/(==.+?==)/).map(part => {
+    if (part.startsWith("==") && part.endsWith("==") && part.length > 4) {
+      return `<span class="sub-emph" style="color:${emphColor || '#f5c518'}">${esc(part.slice(2, -2))}</span>`;
+    }
+    return esc(part);
+  }).join("");
+}
+
+/** タイプライター: elapsed 秒に応じて文字を順番に出す */
+function typewriterText(text, elapsed, emphColor) {
+  const nShow = Math.min(Math.floor(elapsed * 28), text.length);
+  const vis   = parseInlineMarkup(text.slice(0, nShow), emphColor);
+  const rest  = text.slice(nShow);
+  const hid   = rest ? `<span style="visibility:hidden">${esc(rest)}</span>` : "";
+  return vis + hid;
+}
+
+/** スタイルが適用された span HTML を生成 */
+function _buildSubSpan(seg, eff, t) {
+  const vw      = video().clientWidth || 640;
+  const clampFs = Math.max(11, Math.min(Math.round(eff.font_size * vw / 1920), 80));
+
+  // 背景
+  const bgMap   = { black:[0,0,0], darkgray:[26,26,26], gray:[85,85,85], white:[255,255,255] };
+  const [r,g,b] = bgMap[eff.bg_color] || [0, 0, 0];
+  const bg      = eff.bg_enabled ? `rgba(${r},${g},${b},${eff.bg_opacity})` : "transparent";
+  const padPx   = eff.bg_enabled
+    ? `${Math.round(eff.bg_padding * 0.18)}px ${Math.round(eff.bg_padding * 0.36)}px`
+    : "4px 0";
+
+  // アウトライン (-webkit-text-stroke + paint-order でフィルの前に描画)
+  const hasOL   = eff.outline_width > 0;
+  const strokeCSS = hasOL
+    ? `-webkit-text-stroke:${eff.outline_width}px ${eff.outline_color};paint-order:stroke fill;`
+    : "text-shadow:1px 1px 4px rgba(0,0,0,.75);";
+
+  // フォント
+  const fontFam = FONT_FAMILIES[eff.font_family] || eff.font_family || "inherit";
+  const fontW   = eff.font_family === "serif" ? 700 : 900;
+
+  // アニメーションクラス (typewriter / none は付与しない)
+  const animClass = (eff.animation !== "typewriter" && eff.animation !== "none")
+    ? `sub-anim-${eff.animation}` : "";
+
+  // テキスト内容
+  const textHTML = eff.animation === "typewriter"
+    ? typewriterText(seg.text, t - seg.start, eff.emphasis_color)
+    : parseInlineMarkup(seg.text, eff.emphasis_color);
+
+  return `<span class="sub-text ${animClass}" style="
+    color:${eff.color};
+    background:${bg};
+    padding:${padPx};
+    font-size:${clampFs}px;
+    font-family:${fontFam};
+    font-weight:${fontW};
+    line-height:1.4;
+    ${strokeCSS}
+  ">${textHTML}</span>`;
+}
+
 // ═══ 字幕オーバーレイ ══════════════════════════════════════
 function updateSubOverlay() {
   const div = document.getElementById("subtitle-overlay");
-  if (trackMuted.subs) { div.innerHTML = ""; return; }
+  if (trackMuted.subs) { div.innerHTML = ""; _lastSegId = null; return; }
 
   const t   = video().currentTime;
   const seg = (state?.subtitles || []).find(s => t >= s.start && t < s.end);
-  if (!seg) { div.innerHTML = ""; return; }
+  if (!seg) { div.innerHTML = ""; _lastSegId = null; return; }
 
-  const fontColor = seg.emphasis ? "#f5c518"
-    : seg.fontcolor === "red"  ? "#ff5c5c"
-    : seg.fontcolor === "cyan" ? "#5ce0f5"
-    : "#ffffff";
+  const eff = getEffectiveStyle(seg);
 
-  const bgEnabled = seg.bg_enabled ?? true;
-  const bgName    = seg.bg_color   ?? "black";
-  const bgOp      = seg.bg_opacity ?? 0.65;
-  const bgPad     = seg.bg_padding ?? 10;
-  const bgCssMap  = {
-    black:    [0,   0,   0  ],
-    darkgray: [26,  26,  26 ],
-    gray:     [85,  85,  85 ],
-    white:    [255, 255, 255],
-  };
-  const [r, g, b] = bgCssMap[bgName] || [0, 0, 0];
-  const bg    = bgEnabled ? `rgba(${r},${g},${b},${bgOp})` : "transparent";
-  const padPx = bgEnabled
-    ? `${Math.round(bgPad * 0.18)}px ${Math.round(bgPad * 0.36)}px`
-    : "4px 0";
-
-  const fs     = seg.fontsize ?? 52;
-  const vw     = video().clientWidth || 640;
-  const scaled = Math.round(fs * vw / 1920);
-  const clamp  = Math.max(11, Math.min(scaled, 72));
-
-  // 位置・不透明度（per-clip）
-  const posY   = seg.pos_y   ?? 85;   // % from top
-  const opacity = seg.opacity ?? 1.0;
-
+  // コンテナ位置・不透明度（毎フレーム更新）
   div.style.cssText = `
-    position: absolute;
-    top: ${posY}%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    text-align: center;
-    max-width: 92%;
-    z-index: 10;
-    opacity: ${opacity};
+    position:absolute;top:${eff.pos_y}%;left:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:none;text-align:center;max-width:92%;z-index:10;
+    opacity:${eff.opacity};
   `;
 
-  div.innerHTML = `
-    <span class="sub-text ${seg.emphasis ? 'emphasis' : ''}"
-      style="color:${fontColor};background:${bg};padding:${padPx};font-size:${clamp}px">
-      ${esc(seg.text)}
-    </span>`;
+  const segChanged = seg.id !== _lastSegId;
+  _lastSegId = seg.id;
+
+  if (segChanged) {
+    // セグメント変化 → 再生成（アニメーション発火）
+    div.innerHTML = _buildSubSpan(seg, eff, t);
+  } else if (eff.animation === "typewriter") {
+    // タイプライター: テキストだけ更新（アニメーション維持）
+    const span = div.querySelector(".sub-text");
+    if (span) span.innerHTML = typewriterText(seg.text, t - seg.start, eff.emphasis_color);
+  }
+  // その他: CSS アニメーション進行中のため再描画しない
 }
 
 // ═══ ツールバー ════════════════════════════════════════════
@@ -333,7 +451,194 @@ function renderProps() {
   } else if (mode === "thumbnail") {
     title.textContent = "サムネイル";
     renderThumbnailProps(body);
+  } else if (mode === "style") {
+    title.textContent = "スタイルテンプレート";
+    renderStylePanel(body);
   }
+}
+
+// ═══ スタイルパネル ════════════════════════════════════════
+
+function setTmpl(key, value) {
+  if (!state.style_template) state.style_template = {};
+  state.style_template[key]   = value;
+  state.style_template.preset = "custom";
+  mark(); updateSubOverlay();
+}
+
+function applyPreset(id, bodyEl) {
+  const preset = STYLE_PRESETS.find(p => p.id === id);
+  if (!preset) return;
+  if (!state.style_template) state.style_template = {};
+  Object.assign(state.style_template, preset.style, { preset: id });
+  _lastSegId = null;
+  mark(); updateSubOverlay();
+  if (bodyEl) renderStylePanel(bodyEl);
+  toast(`✨ ${preset.name} を適用しました`);
+}
+
+function renderStylePanel(body) {
+  const tmpl = state.style_template || {};
+  const activePreset = tmpl.preset || "default";
+
+  const animOpts = [
+    ["fade","フェードイン"],["pop","ポップ"],["bounce","バウンス（下→上）"],
+    ["slide-up","スライドアップ"],["shake","シェイク"],
+    ["typewriter","タイプライター"],["none","なし（即時）"],
+  ];
+  const fontOpts = [
+    ["gothic_black","ゴシック Black（標準）"],["impact","Impact / 太字"],
+    ["serif","明朝体（シネマ）"],["rounded","丸ゴシック"],["system","システム"],
+  ];
+
+  body.innerHTML = `
+    <div class="prop-section-title">プリセット（ワンクリック適用）</div>
+    <div class="preset-grid">
+      ${STYLE_PRESETS.map(p => `
+        <button class="preset-card ${p.id === activePreset ? "active" : ""}"
+                data-preset="${p.id}" title="${p.desc}">
+          <span class="preset-emoji">${p.emoji}</span>
+          <span class="preset-name">${p.name}</span>
+        </button>`).join("")}
+    </div>
+
+    <div class="prop-section-title" style="margin-top:6px">フォント / アニメーション</div>
+    <div class="prop-group">
+      <div class="prop-label">フォント</div>
+      <select id="style-font">
+        ${fontOpts.map(([v,l]) =>
+          `<option value="${v}" ${(tmpl.font_family ?? "gothic_black") === v ? "selected" : ""}>${l}</option>`
+        ).join("")}
+      </select>
+    </div>
+    <div class="prop-group">
+      <div class="prop-label">アニメーション</div>
+      <select id="style-anim">
+        ${animOpts.map(([v,l]) =>
+          `<option value="${v}" ${(tmpl.animation ?? "fade") === v ? "selected" : ""}>${l}</option>`
+        ).join("")}
+      </select>
+    </div>
+
+    <div class="prop-section-title">アウトライン</div>
+    <div class="prop-group">
+      <div class="prop-label">太さ（0 = なし）</div>
+      <div class="range-row">
+        <input type="range" id="style-ol-w" min="0" max="8" step="1" value="${tmpl.outline_width ?? 0}">
+        <span class="range-val" id="style-ol-w-val">${tmpl.outline_width ?? 0}px</span>
+      </div>
+    </div>
+    <div class="prop-group">
+      <div class="prop-label">アウトライン色</div>
+      <div class="color-row">
+        ${[["#000000","黒","#555"],["#ffffff","白","#888"],["#1a1a40","ネイビー",""],["#8B0000","ダークレッド",""]]
+          .map(([c,n,bc]) =>
+            `<button class="color-btn ${(tmpl.outline_color ?? "#000000") === c ? "active" : ""}"
+                     data-oc="${c}" style="background:${c};${bc ? `border-color:${bc}` : ""}" title="${n}"></button>`
+          ).join("")}
+      </div>
+    </div>
+
+    <div class="prop-section-title">テキスト色</div>
+    <div class="prop-group">
+      <div class="prop-label">基本色</div>
+      <div class="color-row">
+        ${[["#ffffff","白","#888"],["#FFE000","イエロー",""],["#00FF88","グリーン",""],["#FF6B00","オレンジ",""],["#44AAFF","ブルー",""]]
+          .map(([c,n,bc]) =>
+            `<button class="color-btn ${(tmpl.color ?? "#ffffff") === c ? "active" : ""}"
+                     data-bc="${c}" style="background:${c};${bc ? `border-color:${bc}` : ""}" title="${n}"></button>`
+          ).join("")}
+      </div>
+    </div>
+    <div class="prop-group">
+      <div class="prop-label">強調色 <span class="hint-tag">==テキスト==</span></div>
+      <div class="color-row">
+        ${[["#f5c518","ゴールド"],["#FF4444","レッド"],["#FF6B00","オレンジ"],["#44AAFF","ブルー"],["#00FF88","グリーン"]]
+          .map(([c,n]) =>
+            `<button class="color-btn ${(tmpl.emphasis_color ?? "#f5c518") === c ? "active" : ""}"
+                     data-ec="${c}" style="background:${c}" title="${n}"></button>`
+          ).join("")}
+      </div>
+    </div>
+
+    <div class="divider" style="margin-top:8px"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:4px" id="btn-apply-tmpl">
+      ✨ 全テロップに一括適用
+    </button>
+    <p style="font-size:10px;color:var(--text-dim);text-align:center;line-height:1.5;margin-top:6px">
+      テキスト内で ==強調== と書くと<br>強調色で表示されます
+    </p>
+  `;
+
+  // Preset cards
+  body.querySelectorAll(".preset-card").forEach(btn => {
+    btn.addEventListener("click", () => {
+      pushHistory();
+      applyPreset(btn.dataset.preset, body);
+    });
+  });
+
+  // Font
+  body.querySelector("#style-font").addEventListener("change", e => setTmpl("font_family", e.target.value));
+
+  // Animation
+  body.querySelector("#style-anim").addEventListener("change", e => {
+    setTmpl("animation", e.target.value);
+    _lastSegId = null;
+  });
+
+  // Outline width
+  const olWEl  = body.querySelector("#style-ol-w");
+  const olWVal = body.querySelector("#style-ol-w-val");
+  olWEl.addEventListener("input", () => {
+    olWVal.textContent = olWEl.value + "px";
+    setTmpl("outline_width", parseInt(olWEl.value));
+  });
+  olWEl.addEventListener("change", pushHistory);
+
+  // Outline color
+  body.querySelectorAll("[data-oc]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      body.querySelectorAll("[data-oc]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      setTmpl("outline_color", btn.dataset.oc);
+      pushHistory();
+    });
+  });
+
+  // Base color
+  body.querySelectorAll("[data-bc]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      body.querySelectorAll("[data-bc]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      setTmpl("color", btn.dataset.bc);
+      _lastSegId = null;
+      pushHistory();
+    });
+  });
+
+  // Emphasis color
+  body.querySelectorAll("[data-ec]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      body.querySelectorAll("[data-ec]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      setTmpl("emphasis_color", btn.dataset.ec);
+      _lastSegId = null;
+      pushHistory();
+    });
+  });
+
+  // Apply all: per-clip overrides をクリア
+  body.querySelector("#btn-apply-tmpl").addEventListener("click", () => {
+    pushHistory();
+    state.subtitles.forEach(seg => {
+      delete seg.animation;
+      delete seg.color_override;
+    });
+    _lastSegId = null;
+    mark(); renderAll(); pushHistory();
+    toast("✨ 全テロップにスタイルを適用しました");
+  });
 }
 
 function renderSubProps(body, seg) {
@@ -353,7 +658,24 @@ function renderSubProps(body, seg) {
   const fcRed    = seg.fontcolor === "red"            ? "active" : "";
   const fcCyan   = seg.fontcolor === "cyan"           ? "active" : "";
 
+  const segAnim = seg.animation ?? "";
+  const animOpts2 = [
+    ["","── テンプレートに従う ──"],["fade","フェードイン"],["pop","ポップ"],
+    ["bounce","バウンス"],["slide-up","スライドアップ"],
+    ["shake","シェイク"],["typewriter","タイプライター"],["none","なし"],
+  ];
+
   body.innerHTML = `
+    <!-- ══ アニメーション個別設定 ══ -->
+    <div class="prop-section-title">アニメーション（個別）</div>
+    <div class="prop-group">
+      <select id="sub-anim">
+        ${animOpts2.map(([v,l]) =>
+          `<option value="${v}" ${segAnim === v ? "selected" : ""}>${l}</option>`
+        ).join("")}
+      </select>
+    </div>
+
     <!-- ══ テキスト ══ -->
     <div class="prop-section-title">テキスト</div>
     <div class="prop-group">
@@ -463,6 +785,14 @@ function renderSubProps(body, seg) {
       <button class="btn btn-danger btn-sm" id="sub-del">削除</button>
     </div>
   `;
+
+  // アニメーション個別
+  document.getElementById("sub-anim").addEventListener("change", e => {
+    if (e.target.value) seg.animation = e.target.value;
+    else delete seg.animation;
+    _lastSegId = null;
+    mark(); pushHistory();
+  });
 
   // テキスト
   document.getElementById("sub-text").addEventListener("input", e => {
@@ -811,7 +1141,8 @@ function bindTimeline() {
 }
 
 function addSubAtCurrentTime() {
-  const t = video().currentTime || 0;
+  const t    = video().currentTime || 0;
+  const tmpl = state.style_template || {};
   pushHistory();
   const seg = {
     id: Date.now(),
@@ -819,7 +1150,7 @@ function addSubAtCurrentTime() {
     end:   parseFloat((t + 3).toFixed(2)),
     text:  "新しいテロップ",
     emphasis: false,
-    fontsize: 52,
+    fontsize: tmpl.font_size ?? 52,
   };
   state.subtitles.push(seg);
   state.subtitles.sort((a, b) => a.start - b.start);

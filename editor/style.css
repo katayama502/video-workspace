@@ -410,6 +410,72 @@ input[type="range"] { flex: 1; accent-color: var(--accent); cursor: pointer; hei
 }
 .tl-clip-left-handle::after { content: '⋮'; font-size: 10px; color: rgba(255,255,255,.4); }
 
+/* ── 字幕アニメーション ──────────────────────── */
+@keyframes sub-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes sub-pop {
+  0%   { transform: scale(0.55) translateY(10px); opacity: 0; }
+  65%  { transform: scale(1.10); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes sub-bounce {
+  0%   { transform: translateY(28px); opacity: 0; }
+  60%  { transform: translateY(-7px); opacity: 1; }
+  80%  { transform: translateY(3px); }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes sub-slide-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes sub-shake {
+  0%,100% { transform: translateX(0);    opacity: 1; }
+  10%     { transform: translateX(-6px); }
+  25%     { transform: translateX(6px);  }
+  40%     { transform: translateX(-4px); }
+  55%     { transform: translateX(4px);  }
+  70%     { transform: translateX(-2px); }
+  85%     { transform: translateX(2px);  }
+}
+.sub-anim-fade      { animation: sub-fade     0.22s ease-out both; }
+.sub-anim-pop       { animation: sub-pop      0.32s cubic-bezier(.34,1.56,.64,1) both; }
+.sub-anim-bounce    { animation: sub-bounce   0.38s cubic-bezier(.22,1,.36,1) both; }
+.sub-anim-slide-up  { animation: sub-slide-up 0.20s ease-out both; }
+.sub-anim-shake     { animation: sub-shake    0.45s ease-out both; }
+
+/* 強調インライン span */
+.sub-emph { font-style: normal; }
+
+/* ── スタイルプリセットカード ──────────────── */
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 2px;
+}
+.preset-card {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 8px 3px 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text-dim);
+  cursor: pointer; transition: all .12s; font-size: 12px;
+}
+.preset-card:hover  { background: var(--surface2); color: var(--text); border-color: var(--gray-7); }
+.preset-card.active { border-color: var(--accent); background: rgba(59,130,246,.15); color: var(--accent); }
+.preset-emoji { font-size: 22px; line-height: 1; }
+.preset-name  { font-size: 8.5px; font-weight: 700; letter-spacing: .02em; text-align: center; line-height: 1.2; }
+
+/* hint タグ（強調 syntax の説明） */
+.hint-tag {
+  display: inline-block; margin-left: 5px;
+  font-size: 10px; color: var(--accent);
+  background: rgba(59,130,246,.15); border-radius: 3px;
+  padding: 1px 5px; font-weight: 400; font-family: var(--mono);
+  letter-spacing: 0;
+}
+
 /* ── ユーティリティ ──────────────────────── */
 .divider { height: 1px; background: var(--border); }
 .row { display: flex; gap: 6px; align-items: center; }
