@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>動画エディタ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══ ヘッダー ═══════════════════════════════════════════ -->
+<div id="header">
+  <div class="header-logo">🎬 動画エディタ <span class="badge">YouTube 16:9</span></div>
+  <div class="header-center">
+    <span style="font-size:11px;color:var(--text-dim)">ズーム</span>
+    <input type="range" id="zoom-slider" min="20" max="400" step="10" value="80" title="タイムラインズーム">
+    <span id="zoom-label" style="min-width:36px;text-align:center;font-size:12px;color:var(--text-dim)">1×</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost btn-sm" id="btn-undo" title="元に戻す (Ctrl+Z)">↩ Undo</button>
+    <button class="btn btn-ghost btn-sm" id="btn-redo" title="やり直し (Ctrl+Y)">↪ Redo</button>
+    <span id="undo-count" style="font-size:10px;color:var(--text-dim)"></span>
+    <button class="btn btn-ghost btn-sm" id="btn-save">💾 保存</button>
+    <button class="btn btn-success btn-sm" id="btn-export">🚀 書き出し</button>
+    <button class="btn btn-ghost btn-sm" id="btn-shortcuts" title="ショートカット一覧 (?)">?</button>
+  </div>
+</div>
+
+<!-- ═══ ワークスペース ════════════════════════════════════════ -->
+<div id="workspace">
+
+  <!-- ─── 左ツールバー ──────────────────────────────── -->
+  <div id="toolbar">
+    <button class="tool-btn active" data-mode="text">T<span>テキスト</span></button>
+    <button class="tool-btn" data-mode="audio">🎵<span>音声</span></button>
+    <button class="tool-btn" data-mode="settings">⚙<span>設定</span></button>
+    <div class="tool-divider"></div>
+    <button class="tool-btn" data-mode="thumbnail">🖼<span>サムネイル</span></button>
+  </div>
+
+  <!-- ─── プレビュー（中央）─────────────────────────── -->
+  <div id="preview-area">
+
+    <div id="player-wrap">
+      <video id="video-el" preload="metadata"></video>
+      <div id="subtitle-overlay"></div>
+    </div>
+
+    <div id="player-controls">
+      <button id="btn-prev5" class="ctrl-btn" title="−5秒">⏮ 5s</button>
+      <button id="play-btn">▶</button>
+      <button id="btn-next5" class="ctrl-btn" title="+5秒">5s ⏭</button>
+      <div id="seekbar-wrap">
+        <div id="seekbar-fill"></div>
+        <div id="seekbar-thumb"></div>
+      </div>
+      <div class="timecode">
+        <span id="time-cur">0:00.000</span>
+        <span style="color:var(--gray-7)"> / </span>
+        <span id="time-dur">0:00.000</span>
+      </div>
+      <span class="kbd-hint">Space</span><span style="font-size:10px;color:var(--gray-7)"> 再生　</span>
+      <span class="kbd-hint">JKL</span><span style="font-size:10px;color:var(--gray-7)"> 移動　</span>
+      <span class="kbd-hint">S</span><span style="font-size:10px;color:var(--gray-7)"> 分割</span>
+    </div>
+
+  </div>
+
+  <!-- ─── プロパティパネル（右）─────────────────────── -->
+  <div id="properties">
+    <div class="props-header" id="props-title">テキスト</div>
+    <div class="props-body" id="props-body">
+      <!-- JS で動的に描画 -->
+    </div>
+  </div>
+
+</div><!-- /workspace -->
+
+<!-- ═══ タイムライン（下部）══════════════════════════════════ -->
+<div id="timeline-section">
+  <div class="tl-topbar">
+    <span class="tl-topbar-label">タイムライン</span>
+    <button class="btn btn-ghost btn-xs" id="btn-add-sub-tl">＋ テロップ追加</button>
+    <div style="flex:1"></div>
+    <span style="font-size:10px;color:var(--gray-7)">ドラッグ=移動　右端=リサイズ　右クリック=メニュー</span>
+  </div>
+  <div id="tl-scroll">
+    <div id="tl-inner">
+      <canvas id="tl-ruler"></canvas>
+      <div id="tl-labels">
+        <div class="tl-label">
+          <div class="tl-label-inner">
+            <span class="tl-label-name">映像</span>
+            <button class="tl-mute-btn" data-track="video" title="映像をミュート">🔊</button>
+          </div>
+        </div>
+        <div class="tl-label">
+          <div class="tl-label-inner">
+            <span class="tl-label-name">テロップ</span>
+            <button class="tl-mute-btn" data-track="subs" title="テロップをミュート">🔊</button>
+          </div>
+        </div>
+        <div class="tl-label">
+          <div class="tl-label-inner">
+            <span class="tl-label-name">BGM</span>
+            <button class="tl-mute-btn" data-track="bgm" title="BGMをミュート">🔊</button>
+          </div>
+        </div>
+      </div>
+      <div id="tl-tracks">
+        <div class="tl-track" id="track-video"></div>
+        <div class="tl-track" id="track-subs"></div>
+        <div class="tl-track" id="track-bgm"></div>
+      </div>
+      <div id="tl-snap-line"></div>
+      <div id="tl-playhead"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ コンテキストメニュー ═══════════════════════════════════ -->
+<div id="context-menu">
+  <div class="ctx-item" id="ctx-split">✂ 分割<span class="ctx-kbd">S</span></div>
+  <div class="ctx-item" id="ctx-dup">⧉ 複製<span class="ctx-kbd">D</span></div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item danger" id="ctx-del">✕ 削除<span class="ctx-kbd">Del</span></div>
+</div>
+
+<!-- ═══ キーボードショートカット ヘルプ ══════════════════════════ -->
+<div id="shortcut-modal">
+  <div class="shortcut-box">
+    <h2>⌨ キーボードショートカット</h2>
+    <div class="shortcut-grid">
+      <div class="shortcut-cat">再生</div>
+      <div class="shortcut-row"><span>再生 / 一時停止</span><div class="shortcut-keys"><span class="key">Space</span></div></div>
+      <div class="shortcut-row"><span>前に戻す (J)</span><div class="shortcut-keys"><span class="key">J</span></div></div>
+      <div class="shortcut-row"><span>一時停止 (K)</span><div class="shortcut-keys"><span class="key">K</span></div></div>
+      <div class="shortcut-row"><span>先に進む (L)</span><div class="shortcut-keys"><span class="key">L</span></div></div>
+      <div class="shortcut-row"><span>−2秒</span><div class="shortcut-keys"><span class="key">←</span></div></div>
+      <div class="shortcut-row"><span>+2秒</span><div class="shortcut-keys"><span class="key">→</span></div></div>
+
+      <div class="shortcut-cat">編集</div>
+      <div class="shortcut-row"><span>クリップ分割</span><div class="shortcut-keys"><span class="key">S</span></div></div>
+      <div class="shortcut-row"><span>選択クリップ削除</span><div class="shortcut-keys"><span class="key">Del</span></div></div>
+      <div class="shortcut-row"><span>元に戻す</span><div class="shortcut-keys"><span class="key">Ctrl</span><span class="key">Z</span></div></div>
+      <div class="shortcut-row"><span>やり直し</span><div class="shortcut-keys"><span class="key">Ctrl</span><span class="key">Y</span></div></div>
+      <div class="shortcut-row"><span>保存</span><div class="shortcut-keys"><span class="key">Ctrl</span><span class="key">S</span></div></div>
+
+      <div class="shortcut-cat">その他</div>
+      <div class="shortcut-row"><span>このヘルプを閉じる</span><div class="shortcut-keys"><span class="key">?</span> / <span class="key">Esc</span></div></div>
+    </div>
+    <div style="margin-top:16px;text-align:center">
+      <button class="btn btn-ghost btn-sm" id="shortcut-close">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ エクスポートモーダル ════════════════════════════════════ -->
+<div id="export-modal">
+  <div class="modal-box">
+    <h2>🚀 書き出し（再レンダリング）</h2>
+    <p style="font-size:12px;color:#777;line-height:1.6">
+      編集内容を ffmpeg で反映して <code style="color:var(--accent)">output/final_16x9.mp4</code> を生成します。
+    </p>
+    <div id="export-progress" class="progress-bar" style="display:none">
+      <div class="progress-fill"></div>
+    </div>
+    <div id="export-log">待機中...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="btn-modal-close">閉じる</button>
+      <button class="btn btn-success" id="btn-export-run">▶ 開始</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

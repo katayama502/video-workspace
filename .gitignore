@@ -1,0 +1,40 @@
+# ── シークレット ──────────────────
+.env
+*.key
+*.pem
+
+# ── 動画・メディアファイル ────────
+input/
+output/
+bgm/
+assets/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.mp3
+*.wav
+*.jpg
+*.jpeg
+*.png
+*.gif
+!editor/
+
+# ── Python ────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# ── macOS ─────────────────────────
+.DS_Store
+.AppleDouble
+
+# ── エディタ ──────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
